@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+
+
+"""
+Desc: Script to populate the database for the last N days of use.
+
+Notes:
+    - Currently depends on the enhanced-jobscripts existing in the user path
+    - This script is built to be run on all users, en-masse
+
+Authors:
+    - Chance Nelson <chance-nelson@nau.edu>
+"""
+
+
+import subprocess
+import sys
+import time
+from datetime import datetime
+from datetime import timedelta
+import mysql.connector as mariadb
+
+
+def getSlurmAccountUsers(acc):
+    """
+    Desc: Get a list of slurm users who belong to a given account.
+
+    Args:
+        acc (string): name of slurm account to search
+
+    Returns:
+        List of account user names. None of account doesn't exist/no users
+        belong to it.
+    """
+    out = subprocess.getstatusoutput('sshare -a -P')[1].split('\n')
+    users = []
+
+    for i in out:
+        users.append(i.split('|'))
+        
+    users = [i for i in users if acc in i[0]]
+    users = [i[1] for i in users if not i[1] == 'parent' and not i[1] == '']
+
+    return users
+
+
+def getSlurmAccounts():
+    """
+    Desc: Retrieve a list of all available slurm accounts in the cluster
+    """
+    out = subprocess.getstatusoutput('sshare -l -P')[1].split('\n')[1::]
+    accounts = []
+
+    for i in out:
+        accounts.append(i.split('|'))
+        
+    account_names = []
+    for i in accounts :
+        if i[0].strip() not in account_names:
+            account_names.append(i[0].strip())
+
+    return account_names
+
+
+def getJobStats(user, account, start_date_time=None):
+    """
+    Desc: Retrieve the job stats for a list of users.
+
+    Args:
+        user (string): User to search.
+        account (string): Slurm account of user
+        hoursBack (int) (optional): How many hours in the past to search back
+
+    Returns:
+        [float, float, float, float]
+        List containing the stats for memory, cores, timelimit, and total,
+        respectively.
+    """
+    cmd = 'jobstats --parsable '  # Add in username and make parsable
+
+    cmd += "\"-u {} -A {}\"".format(user, account)
+
+    if start_date_time:
+        cmd += ' -S {}'.format(start_date_time.strftime('%m/%d/%y'))
+        cmd += ' -E {}'.format((start_date_time + timedelta(1)).strftime('%m/%d/%y'))
+
+    res      = subprocess.getstatusoutput(cmd)[1].split('\n')
+    jobCount = len(res) - 2
+    res      = res[-1].split('|')[1::] 
+    res      = [float(i.strip('%')) if i != '-' else i for i in res]
+    res.append(jobCount)
+    return res
+
+
+def updateDatabase(user, account, stats, date, cursor):
+    """
+    Desc: Insert some data into the database
+
+    Args:
+        user (string): Username associated with account
+        account (string): Slurm account of user
+        stats ([float, float, float, float, int]): List of data acquired 
+                                                   from jobstats of the 
+                                                   order: [mem, cpu, tlimit,
+                                                   jobsum].
+    """
+    if -1 not in stats and stats.count('-') < 4:
+        stats = [None if i == '-' else i for i in stats]
+
+    # There is no data to commit, skip
+    else:
+        return
+
+    # Execute insert of data
+    cursor.execute('INSERT IGNORE INTO jobs (username, account, date, cores, ' +
+                   'memory, timelimit, total, jobsum) VALUES (%s, %s, %s, %s, %s, ' +
+                   '%s, %s, %s)', (user, account, date, stats[0], stats[1], 
+                                   stats[2], stats[3], stats[4]))
+
+if __name__ == '__main__':
+    try:
+        username  = sys.argv[1]
+        password  = sys.argv[2]
+        host      = sys.argv[3]
+        from_date = datetime.strptime(sys.argv[4], '%m/%d/%y')
+   
+    except:
+        exit()
+
+    print("Processing jobs for", from_date)
+
+    accounts = getSlurmAccounts()
+    conn = mariadb.connect(user=username, password=password, host=host)
+    cursor = conn.cursor()
+
+    cursor.execute('USE jobstats')
+
+    for account in accounts:
+        if account == 'orphan':
+            continue
+
+        for user in getSlurmAccountUsers(account):
+            print(user, account, getJobStats(user, account, start_date_time=from_date), from_date, cursor)
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    print("Done!")

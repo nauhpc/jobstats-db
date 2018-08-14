@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+
+
+"""
+Desc: A script for generating the needed SQL tables for jobstats
+
+Authors:
+    - Chance Nelson <chance-nelson@nau.edu>
+"""
+
+
+import sys
+import mysql.connector as mariadb
+from mysql.connector import errorcode
+
+
+def genTables(username, password, host):
+    """
+    Desc: Generate the 'jobstats' table, with needed columns:
+          ['username', 'account', 'date' | 'cores', 'memory', 'timelimit', 'total']
+
+    Args:
+        username (string): username of mariaDB account login
+        password (string): password of mariaDB account login
+    """
+    tableName = 'jobs'
+    tables = {}
+    tables['jobs'] = (
+        "CREATE TABLE jobs ("
+        "username varchar(10) NOT NULL,"
+        "account varchar(20) NOT NULL,"
+        "date date NOT NULL,"
+        "cores float,"
+        "memory float,"
+        "timelimit float,"
+        "total float,"
+        "jobsum int NOT NULL,"
+        "PRIMARY KEY (username, account, date))"
+        )
+
+    if password == '':
+        password = None
+
+    conn = mariadb.connect(user=username, password=password, host=host)
+    cursor = conn.cursor()
+
+    cursor.execute('USE jobstats')
+
+    for key in tables:
+        cursor.execute(tables[key])
+
+    cursor.close()
+    conn.close()
+
+
+if __name__ == '__main__':
+    try:
+        genTables(sys.argv[1], sys.argv[2], sys.argv[3])
+    
+    except mariadb.connector.Error as err:
+        if err.errno == errorcode.ER_TABLE_EXISTS_ERROR:
+            print("Error: Table already exists")
+        
+        elif err.errno == errorcode.ER_BAD_DB_ERROR:
+            print("Error: Cannot create table")
+
+        else:
+            print("Error: " + err.errno)
+
+        exit(1)
+
+    print("Tables created!")

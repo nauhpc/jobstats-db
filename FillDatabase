@@ -1,0 +1,13 @@
+#!/bin/bash
+
+source /common/conf/bashrc
+
+module load python/3.latest
+
+now=$4
+while [ "$now" != $(date +%m/%d/%y -d $5) ] ;
+do
+    echo $now    
+    /scratch/cbn35/PopulateDatabase $1 $2 $3 $now
+    now=$(date +%m/%d/%y -d "$now + 1 day")
+done
