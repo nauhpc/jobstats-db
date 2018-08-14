@@ -1,4 +1,4 @@
-# Jobstats
+# Jobstats-DB
 
 ## Overview 
 Provides scripts for building and populating a database for easy storage of Slurm job resource usage data.
