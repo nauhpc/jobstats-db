@@ -12,7 +12,7 @@ Provides scripts for building and populating a database for easy storage of Slur
 
 ### Install
 1. Clone and enter repository `git clone https://github.com/nauhpc/jobstats-db.git && cd jobstats-db`
-2. Create database `jobstats`, with tables `jobs`, or run `BuildDatabase`
+2. Create database `jobstats`, with table `jobs`, or run `BuildDatabase`
 3. Populate the database with pas slurm database with `FillDatabase <user> <pass> <host> <from> <to>`
 
 ## Daily Population of Database
