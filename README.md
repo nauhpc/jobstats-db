@@ -9,6 +9,7 @@ Provides scripts for building and populating a database for easy storage of Slur
 1. Python 3.5+ 
 2. Slurm toolkit
 3. MySQL/MariaDB
+4. [jobstats](https://github.com/nauhpc/jobstats)
 
 ### Install
 1. Clone and enter repository `git clone https://github.com/nauhpc/jobstats-db.git && cd jobstats-db`
