@@ -31,11 +31,11 @@ def genTables(username, password, host):
         "account varchar(20) NOT NULL,"
         "date date NOT NULL,"
         "coresreq float,"
-        "coresuse float,"
         "memoryreq float,"
-        "memoryuse float,"
         "tlimitreq float,"
+        "cputime   float,"
         "tlimituse float,"
+        "memoryuse float,"
         "jobsum int NOT NULL,"
         "PRIMARY KEY (username, account, date))"
         )
