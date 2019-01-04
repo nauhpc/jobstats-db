@@ -17,11 +17,14 @@ from mysql.connector import errorcode
 def genTables(username, password, host):
     """
     Desc: Generate the 'jobstats' table, with needed columns:
-          ['username', 'account', 'date' | 'cores', 'memory', 'timelimit', 'total']
+          ['username', 'account', 'date' | 'cores', 'memory', 'timelimit'].
+          Cores, memory, and timelimit have two columns for requested amount
+          of resources and resources used in the job.
 
     Args:
         username (string): username of mariaDB account login
         password (string): password of mariaDB account login
+        host (string): Host of the db
     """
     tableName = 'jobs'
     tables = {}
