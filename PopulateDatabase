@@ -5,7 +5,6 @@
 Desc: Script to populate the database for the last N days of use.
 
 Notes:
-    - Currently depends on the enhanced-jobscripts existing in the user path
     - This script is built to be run on all users, en-masse
 
 Authors:
@@ -62,6 +61,48 @@ def getSlurmAccounts():
     return account_names
 
 
+def timeStringToSeconds(time_string):
+    """
+    Desc: Convert a time string to seconds total elapsed.
+
+    Args:
+        time_string (string): Timestamp of the form 'D-HH:MM:SS.SSS'
+
+    Returns:
+        Integer or floating point representation of seconds elapsed.
+    """
+    right_decimal = 0
+    time_in_seconds = 0
+    time_index = 0
+
+    time_parsed = time_string.split('.')
+
+    if len(time_parsed) > 1:
+        time_in_seconds += float('0.' + time_parsed[1])
+
+    time_parsed = time_parsed[0]
+    
+    time_parsed = re.split('-|:', time_parsed)
+
+    # Does elapsed contain days? (*1-*00:00:00)
+    if len(time_parsed) == 4:
+        time_in_seconds += int(time_parsed[0]) * 24 * 60 * 60
+
+    # Does time contain hours?
+    if len(time_parsed) >= 3:
+        time_in_seconds += int(time_parsed[-3]) * 60 * 60  # Hours
+
+    # Does time contain minutes?
+    if len(time_parsed) >= 2:
+        time_in_seconds += int(time_parsed[-2]) * 60       # Minutes
+    
+    # Does time contain seconds?
+    if len(time_parsed) >= 1:
+        time_in_seconds += float(time_parsed[-1])          # Seconds
+
+    return time_in_seconds
+
+
 def getJobStats(user, account, start_date_time=None):
     """
     Desc: Retrieve the job stats for a list of users.
@@ -85,11 +126,32 @@ def getJobStats(user, account, start_date_time=None):
         cmd += ' -E {}'.format((start_date_time + timedelta(1)).strftime('%m/%d/%y'))
 
     res      = subprocess.getstatusoutput(cmd)[1].split('\n')
-    jobCount = len(res) - 2
-    res      = res[-1].split('|')[1::] 
-    res      = [float(i.strip('%')) if i != '-' else i for i in res]
-    res.append(jobCount)
-    return res
+    job_ount = len(res) - 2
+
+    user_stats = {
+            'memory-req': 0,
+            'cores-req': 0,
+            'tlimit-req': 0,
+            'memory-use': 0,
+            'cpu-time': 0,
+            'tlimit-use': 0,
+            'job-count': job_count
+    }
+
+    # Get the resources required/used per job
+    for job in res[1::-1]:
+        # Skip failed jobs
+        if job[8] != 'COMPLETED':
+            continue
+
+        job_stats['memory-req'] += int(job[2].replace('M', ''))
+        job_stats['memory-use'] += int(job[3].replace('M', ''))
+        job_stats['cores-req']  += int(job[4])
+        job_stats['cpu-time']   += float(timeStringToSeconds(job[5]))
+        job_stats['tlimit-req'] += int(timeStringToSeconds(job[6]))
+        job_stats['tlimit-use'] += int(timeStringToSeconds(job[7]))
+
+    return user_stats
 
 
 def updateDatabase(user, account, stats, date, cursor):
