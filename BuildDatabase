@@ -12,6 +12,7 @@ Authors:
 import sys
 import mysql.connector as mariadb
 from mysql.connector import errorcode
+import configparser
 
 
 def genTables(username, password, host):
@@ -33,7 +34,7 @@ def genTables(username, password, host):
         "username varchar(10) NOT NULL,"
         "account varchar(20) NOT NULL,"
         "date date NOT NULL,"
-        "coresreq  int,"
+        "idealcpu  float,"
         "memoryreq int,"
         "tlimitreq int,"
         "cputime   float,"
@@ -59,8 +60,20 @@ def genTables(username, password, host):
 
 
 if __name__ == '__main__':
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+
     try:
-        genTables(sys.argv[1], sys.argv[2], sys.argv[3])
+        username = config['jobstats-db']['username']
+        password = config['jobstats-db']['password']
+        host     = config['jobstats-db']['host']
+
+    except:
+        print('Error: invalid config file')
+        exit(1)
+
+    try:
+        genTables(username, password, host)
     
     except mariadb.connector.Error as err:
         if err.errno == errorcode.ER_TABLE_EXISTS_ERROR:
