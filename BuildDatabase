@@ -12,16 +12,20 @@ Authors:
 import sys
 import mysql.connector as mariadb
 from mysql.connector import errorcode
+import configparser
 
 
 def genTables(username, password, host):
     """
     Desc: Generate the 'jobstats' table, with needed columns:
-          ['username', 'account', 'date' | 'cores', 'memory', 'timelimit', 'total']
+          ['username', 'account', 'date' | 'cores', 'memory', 'timelimit'].
+          Cores, memory, and timelimit have two columns for requested amount
+          of resources and resources used in the job.
 
     Args:
         username (string): username of mariaDB account login
         password (string): password of mariaDB account login
+        host (string): Host of the db
     """
     tableName = 'jobs'
     tables = {}
@@ -30,10 +34,12 @@ def genTables(username, password, host):
         "username varchar(10) NOT NULL,"
         "account varchar(20) NOT NULL,"
         "date date NOT NULL,"
-        "cores float,"
-        "memory float,"
-        "timelimit float,"
-        "total float,"
+        "idealcpu  float,"
+        "memoryreq int,"
+        "tlimitreq int,"
+        "cputime   float,"
+        "tlimituse int,"
+        "memoryuse int,"
         "jobsum int NOT NULL,"
         "PRIMARY KEY (username, account, date))"
         )
@@ -54,8 +60,20 @@ def genTables(username, password, host):
 
 
 if __name__ == '__main__':
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+
     try:
-        genTables(sys.argv[1], sys.argv[2], sys.argv[3])
+        username = config['jobstats-db']['username']
+        password = config['jobstats-db']['password']
+        host     = config['jobstats-db']['host']
+
+    except:
+        print('Error: invalid config file')
+        exit(1)
+
+    try:
+        genTables(username, password, host)
     
     except mariadb.connector.Error as err:
         if err.errno == errorcode.ER_TABLE_EXISTS_ERROR:

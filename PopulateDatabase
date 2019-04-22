@@ -5,7 +5,6 @@
 Desc: Script to populate the database for the last N days of use.
 
 Notes:
-    - Currently depends on the enhanced-jobscripts existing in the user path
     - This script is built to be run on all users, en-masse
 
 Authors:
@@ -16,9 +15,12 @@ Authors:
 import subprocess
 import sys
 import time
+import re
 from datetime import datetime
 from datetime import timedelta
 import mysql.connector as mariadb
+import configparser
+import os
 
 
 def getSlurmAccountUsers(acc):
@@ -62,6 +64,48 @@ def getSlurmAccounts():
     return account_names
 
 
+def timeStringToSeconds(time_string):
+    """
+    Desc: Convert a time string to seconds total elapsed.
+
+    Args:
+        time_string (string): Timestamp of the form 'D-HH:MM:SS.SSS'
+
+    Returns:
+        Integer or floating point representation of seconds elapsed.
+    """
+    right_decimal = 0
+    time_in_seconds = 0
+    time_index = 0
+
+    time_parsed = time_string.split('.')
+
+    if len(time_parsed) > 1:
+        time_in_seconds += float('0.' + time_parsed[1])
+
+    time_parsed = time_parsed[0]
+    
+    time_parsed = re.split('-|:', time_parsed)
+
+    # Does elapsed contain days? (*1-*00:00:00)
+    if len(time_parsed) == 4:
+        time_in_seconds += int(time_parsed[0]) * 24 * 60 * 60
+
+    # Does time contain hours?
+    if len(time_parsed) >= 3:
+        time_in_seconds += int(time_parsed[-3]) * 60 * 60  # Hours
+
+    # Does time contain minutes?
+    if len(time_parsed) >= 2:
+        time_in_seconds += int(time_parsed[-2]) * 60       # Minutes
+    
+    # Does time contain seconds?
+    if len(time_parsed) >= 1:
+        time_in_seconds += float(time_parsed[-1])          # Seconds
+
+    return time_in_seconds
+
+
 def getJobStats(user, account, start_date_time=None):
     """
     Desc: Retrieve the job stats for a list of users.
@@ -76,20 +120,98 @@ def getJobStats(user, account, start_date_time=None):
         List containing the stats for memory, cores, timelimit, and total,
         respectively.
     """
-    cmd = 'jobstats --parsable '  # Add in username and make parsable
+    cmd = 'jobstats -p'  # Add in username and make parsable
 
-    cmd += "\"-u {} -A {}\"".format(user, account)
+    cmd += " -u {0} -A {1}".format(user, account)
 
     if start_date_time:
         cmd += ' -S {}'.format(start_date_time.strftime('%m/%d/%y'))
         cmd += ' -E {}'.format((start_date_time + timedelta(1)).strftime('%m/%d/%y'))
 
-    res      = subprocess.getstatusoutput(cmd)[1].split('\n')
-    jobCount = len(res) - 2
-    res      = res[-1].split('|')[1::] 
-    res      = [float(i.strip('%')) if i != '-' else i for i in res]
-    res.append(jobCount)
-    return res
+    cmd += ' --state=COMPLETED'  # filter for only completed jobs on that day 
+                                 # to prevent duplicates
+
+    res       = subprocess.getstatusoutput(cmd)[1].split('\n')
+    job_count = len(res) 
+
+    user_stats = {
+        'memory-req': None,
+        'ideal-cpu-time':  None,
+        'tlimit-req': None,
+        'memory-use': None,
+        'cpu-time':   None,
+        'tlimit-use': None,
+        'job-count':  job_count
+    }
+
+    # Get the resources required/used per job
+    for job in res:
+        job = job.split('|')
+        # Skip failed jobs
+        if len(job) != 10 or job[8] != 'COMPLETED':
+            user_stats['job-count'] -= 1
+            continue
+
+        mem_req    = None
+        mem_use    = None
+        core_req   = None 
+        cpu_time   = None
+        tlimit_req = None
+        tlimit_use = None
+
+        try:
+            mem_req = int(job[2].replace('M', ''))
+            mem_use = int(float(job[3].replace('M', '')))
+
+            if mem_req > 0:
+                if not user_stats['memory-req']:
+                    user_stats['memory-req'] = 0   
+
+                if not user_stats['memory-use']:
+                    user_stats['memory-use'] = 0
+
+                user_stats['memory-req'] += mem_req
+                user_stats['memory-use'] += mem_use
+
+        except:
+            pass
+
+        try:
+            tlimit_req = int(timeStringToSeconds(job[6]))
+            tlimit_use = int(timeStringToSeconds(job[7]))
+
+
+            if tlimit_req > 0:
+                if not user_stats['tlimit-req']:
+                    user_stats['tlimit-req'] = 0   
+
+                if not user_stats['tlimit-use']:
+                    user_stats['tlimit-use'] = 0
+
+                user_stats['tlimit-req'] += tlimit_req
+                user_stats['tlimit-use'] += tlimit_use
+
+        except:
+            pass
+
+        try:
+            core_req = int(job[4])
+            cpu_time = float(timeStringToSeconds(job[5]))
+        
+            if core_req > 1:
+                if not user_stats['ideal-cpu-time']:
+                    user_stats['ideal-cpu-time'] = 0   
+
+                if not user_stats['cpu-time']:
+                    user_stats['cpu-time'] = 0
+
+                user_stats['ideal-cpu-time'] += (core_req * tlimit_use)
+                user_stats['cpu-time']  += cpu_time
+
+        except:
+            pass
+
+    return user_stats
 
 
 def updateDatabase(user, account, stats, date, cursor):
@@ -99,32 +221,44 @@ def updateDatabase(user, account, stats, date, cursor):
     Args:
         user (string): Username associated with account
         account (string): Slurm account of user
-        stats ([float, float, float, float, int]): List of data acquired 
-                                                   from jobstats of the 
-                                                   order: [mem, cpu, tlimit,
-                                                   jobsum].
+        stats (dict): Dictionary of stats values
+        date (datetime): Datetime object for stats
+        cursor (cursor): SQL cursor
     """
-    if -1 not in stats and stats.count('-') < 4:
-        stats = [None if i == '-' else i for i in stats]
+    statement = 'INSERT IGNORE INTO jobs (username, account, date, ' + \
+                'idealcpu, memoryreq, tlimitreq, cputime, tlimituse, ' + \
+                'memoryuse, jobsum) VALUES (%s, %s, %s, %s, %s, ' + \
+                '%s, %s, %s, %s, %s)'
 
-    # There is no data to commit, skip
-    else:
-        return
+    args = (user, account, date, stats['ideal-cpu-time'], stats['memory-req'],
+            stats['tlimit-req'], stats['cpu-time'], stats['tlimit-use'],
+            stats['memory-use'], stats['job-count'])
 
-    # Execute insert of data
-    cursor.execute('INSERT IGNORE INTO jobs (username, account, date, cores, ' +
-                   'memory, timelimit, total, jobsum) VALUES (%s, %s, %s, %s, %s, ' +
-                   '%s, %s, %s)', (user, account, date, stats[0], stats[1], 
-                                   stats[2], stats[3], stats[4]))
+    cursor.execute(statement, args)
+
 
 if __name__ == '__main__':
+    config = configparser.ConfigParser()
+    config.read(os.path.dirname(__file__) + str('/config.ini'))
+
+    username = None
+    password = None
+    host     = None
+
     try:
-        username  = sys.argv[1]
-        password  = sys.argv[2]
-        host      = sys.argv[3]
-        from_date = datetime.strptime(sys.argv[4], '%m/%d/%y')
+        username = config['jobstats-db']['username']
+        host     = config['jobstats-db']['host']
+        password = config['jobstats-db']['password']
+
+    except:
+        print("Error: configuration values not found")
+
+
+    try:
+        from_date = datetime.strptime(sys.argv[1], '%m/%d/%y')
    
     except:
+        print("{0} date")
         exit()
 
     print("Processing jobs for", from_date)
@@ -140,10 +274,13 @@ if __name__ == '__main__':
             continue
 
         for user in getSlurmAccountUsers(account):
-            print(user, account, getJobStats(user, account, start_date_time=from_date), from_date, cursor)
+            stats = getJobStats(user, account, start_date_time=from_date)
+
+            if stats['job-count'] != 0:
+                print(user, stats)
+                updateDatabase(user, account, stats, from_date, cursor)
+    
 
     conn.commit()
     cursor.close()
     conn.close()
-
-    print("Done!")
