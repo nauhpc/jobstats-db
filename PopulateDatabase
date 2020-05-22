@@ -198,15 +198,14 @@ def getJobStats(user, account, start_date_time=None):
             core_req = int(job[4])
             cpu_time = float(timeStringToSeconds(job[5]))
         
-            if core_req > 1:
-                if not user_stats['ideal-cpu-time']:
-                    user_stats['ideal-cpu-time'] = 0   
+            if not user_stats['ideal-cpu-time']:
+                user_stats['ideal-cpu-time'] = 0   
 
-                if not user_stats['cpu-time']:
-                    user_stats['cpu-time'] = 0
+            if not user_stats['cpu-time']:
+                user_stats['cpu-time'] = 0
 
-                user_stats['ideal-cpu-time'] += (core_req * tlimit_use)
-                user_stats['cpu-time']  += cpu_time
+            user_stats['ideal-cpu-time'] += (core_req * tlimit_use)
+            user_stats['cpu-time']  += cpu_time
 
         except:
             pass
