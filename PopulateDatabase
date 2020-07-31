@@ -21,7 +21,48 @@ from datetime import timedelta
 import mysql.connector as mariadb
 import configparser
 import os
+import json
 
+def timeStringToSeconds(timeString):
+    """
+    Desc: Convert a time string to seconds total elapsed.
+
+    Args:
+        timeString (string): Timestamp of the form 'D-HH:MM:SS.SSS'
+
+    Returns:
+        Integer or floating point representation of seconds elapsed.
+    """
+    rightDecimal = 0
+    timeInSeconds = 0
+    timeIndex = 0
+
+    timeParsed = timeString.split('.')
+
+    if len(timeParsed) > 1:
+        timeInSeconds += float('0.' + timeParsed[1])
+
+    timeParsed = timeParsed[0]
+    
+    timeParsed = re.split('-|:', timeParsed)
+
+    # Does elapsed contain days? (*1-*00:00:00)
+    if len(timeParsed) == 4:
+        timeInSeconds += int(timeParsed[0]) * 24 * 60 * 60
+
+    # Does time contain hours?
+    if len(timeParsed) >= 3:
+        timeInSeconds += int(timeParsed[-3]) * 60 * 60  # Hours
+
+    # Does time contain minutes?
+    if len(timeParsed) >= 2:
+        timeInSeconds += int(timeParsed[-2]) * 60       # Minutes
+    
+    # Does time contain seconds?
+    if len(timeParsed) >= 1:
+        timeInSeconds += int(timeParsed[-1])            # Seconds
+
+    return timeInSeconds
 
 def getSlurmAccountUsers(acc):
     """
@@ -106,9 +147,10 @@ def timeStringToSeconds(time_string):
     return time_in_seconds
 
 
-def getJobStats(user, account, start_date_time=None):
+def getJobStats(cursor, user, account, start_date_time=None):
     """
-    Desc: Retrieve the job stats for a list of users.
+    Desc: Retrieve the job stats for a list of users, and populate the gpuinfo
+          table
 
     Args:
         user (string): User to search.
@@ -120,7 +162,7 @@ def getJobStats(user, account, start_date_time=None):
         List containing the stats for memory, cores, timelimit, and total,
         respectively.
     """
-    cmd = 'jobstats -p'  # Add in username and make parsable
+    cmd = 'jobstats -o Comment,End,AllocGRES -p'  # Add in username and make parsable
 
     cmd += " -u {0} -A {1}".format(user, account)
 
@@ -146,18 +188,20 @@ def getJobStats(user, account, start_date_time=None):
 
     # Get the resources required/used per job
     for job in res:
+        print(job)
         job = job.split('|')
         # Skip failed jobs
-        if len(job) != 10 or job[8] != 'COMPLETED':
+        if len(job) < 13 or job[8] != 'COMPLETED':
             user_stats['job-count'] -= 1
             continue
 
-        mem_req    = None
-        mem_use    = None
-        core_req   = None 
-        cpu_time   = None
-        tlimit_req = None
-        tlimit_use = None
+        mem_req       = None
+        mem_use       = None
+        core_req      = None 
+        cpu_time      = None
+        tlimit_req    = None
+        tlimit_use    = None
+        comment       = None # contains GPU usage info
 
         try:
             mem_req = int(job[2].replace('M', ''))
@@ -210,6 +254,33 @@ def getJobStats(user, account, start_date_time=None):
         except:
             pass
 
+        # add row to gpuinfo (1 row per job)
+        gpustats = dict()
+        gpustats['username'] = user
+        gpustats['account'] = account
+        gpustats['date'] = job[10][0:job[10].index('T')]
+        gpustats['jobid'] = job[0]
+        comment = job[9]
+        allocGRES = job[11]
+        gpuinfo = None
+        try:
+            gpuinfo = json.loads(comment)
+        except:
+            pass
+        if gpuinfo is not None and allocGRES.find('gpu') != -1:
+            gpustats['ngpu'] = gpuinfo['ngpu']
+            gpustats['gputime'] = 60.0 * gpuinfo['step'] * gpuinfo['ngpu'] * gpuinfo['gpu_util'] / 100.0
+            gpustats['idealgpu'] = gpuinfo['ngpu'] * tlimit_req
+
+            # insert query
+            statement = 'INSERT IGNORE INTO gpuinfo ' + \
+                '(username,account,date,jobid,ngpu,gputime,idealgpu) ' + \
+                'VALUES (%s, %s, %s, %s, %s, %s, %s)'
+            args = (gpustats['username'], gpustats['account'], gpustats['date'],
+                    gpustats['jobid'], gpustats['ngpu'], gpustats['gputime'],
+                    gpustats['idealgpu'])
+            cursor.execute(statement, args)
+
     return user_stats
 
 
@@ -232,7 +303,6 @@ def updateDatabase(user, account, stats, date, cursor):
     args = (user, account, date, stats['ideal-cpu-time'], stats['memory-req'],
             stats['tlimit-req'], stats['cpu-time'], stats['tlimit-use'],
             stats['memory-use'], stats['job-count'])
-
     cursor.execute(statement, args)
 
 
@@ -273,7 +343,8 @@ if __name__ == '__main__':
             continue
 
         for user in getSlurmAccountUsers(account):
-            stats = getJobStats(user, account, start_date_time=from_date)
+            stats = getJobStats(cursor, user, account,
+                                start_date_time=from_date)
 
             if stats['job-count'] != 0:
                 print(user, stats)
