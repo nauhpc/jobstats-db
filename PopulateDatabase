@@ -187,6 +187,7 @@ def getJobStats(cursor, user, account, start_date_time, track_single_core_jobs):
 
     # Get the resources required/used per job
     for job in res:
+        print(job)
         job = job.split('|')
         # Skip failed jobs
         if len(job) != 13 or job[0] == 'JobID':
@@ -274,6 +275,33 @@ def getJobStats(cursor, user, account, start_date_time, track_single_core_jobs):
             except:
                 # tlimit_use must be None
                 gpustats['idealgpu'] = gpuinfo['ngpu'] * 60.0 * gpuinfo['step']
+
+            # insert query
+            statement = 'INSERT IGNORE INTO gpuinfo ' + \
+                '(username,account,date,jobid,ngpu,gputime,idealgpu) ' + \
+                'VALUES (%s, %s, %s, %s, %s, %s, %s)'
+            args = (gpustats['username'], gpustats['account'], gpustats['date'],
+                    gpustats['jobid'], gpustats['ngpu'], gpustats['gputime'],
+                    gpustats['idealgpu'])
+            cursor.execute(statement, args)
+
+        # add row to gpuinfo (1 row per job)
+        gpustats = dict()
+        gpustats['username'] = user
+        gpustats['account'] = account
+        gpustats['date'] = job[10][0:job[10].index('T')]
+        gpustats['jobid'] = job[0]
+        comment = job[9]
+        allocGRES = job[11]
+        gpuinfo = None
+        try:
+            gpuinfo = json.loads(comment)
+        except:
+            pass
+        if gpuinfo is not None and allocGRES.find('gpu') != -1:
+            gpustats['ngpu'] = gpuinfo['ngpu']
+            gpustats['gputime'] = 60.0 * gpuinfo['step'] * gpuinfo['ngpu'] * gpuinfo['gpu_util'] / 100.0
+            gpustats['idealgpu'] = gpuinfo['ngpu'] * tlimit_req
 
             # insert query
             statement = 'INSERT IGNORE INTO gpuinfo ' + \
