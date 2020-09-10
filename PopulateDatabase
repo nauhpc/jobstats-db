@@ -75,7 +75,7 @@ def getSlurmAccountUsers(acc):
         List of account user names. None of account doesn't exist/no users
         belong to it.
     """
-    out = subprocess.getstatusoutput('sshare -a -P')[1].split('\n')
+    out = subprocess.getstatusoutput('ssh jfg95@monsoon.hpc.nau.edu sshare -a -P')[1].split('\n')
     users = []
 
     for i in out:
@@ -91,7 +91,7 @@ def getSlurmAccounts():
     """
     Desc: Retrieve a list of all available slurm accounts in the cluster
     """
-    out = subprocess.getstatusoutput('sshare -l -P')[1].split('\n')[1::]
+    out = subprocess.getstatusoutput('ssh jfg95@monsoon.hpc.nau.edu sshare -l -P')[1].split('\n')[1::]
     accounts = []
 
     for i in out:
@@ -162,7 +162,7 @@ def getJobStats(cursor, user, account, start_date_time, track_single_core_jobs):
         List containing the stats for memory, cores, timelimit, and total,
         respectively.
     """
-    cmd = 'jobstats -o Comment,End,AllocGRES -p'  # Add in username and make parsable
+    cmd = 'ssh jfg95@monsoon.hpc.nau.edu /home/jfg95/jobstats/jobstats/jobstats -o Comment,End,AllocGRES -p'  # Add in username and make parsable
     cmd += " -u {0} -A {1}".format(user, account)
 
     if start_date_time:
@@ -184,10 +184,10 @@ def getJobStats(cursor, user, account, start_date_time, track_single_core_jobs):
         'tlimit-use': None,
         'job-count':  job_count
     }
+    print("res = " + str(res))
 
     # Get the resources required/used per job
     for job in res:
-        print(job)
         job = job.split('|')
         # Skip failed jobs
         if len(job) != 13 or job[0] == 'JobID':
@@ -285,33 +285,6 @@ def getJobStats(cursor, user, account, start_date_time, track_single_core_jobs):
                     gpustats['idealgpu'])
             cursor.execute(statement, args)
 
-        # add row to gpuinfo (1 row per job)
-        gpustats = dict()
-        gpustats['username'] = user
-        gpustats['account'] = account
-        gpustats['date'] = job[10][0:job[10].index('T')]
-        gpustats['jobid'] = job[0]
-        comment = job[9]
-        allocGRES = job[11]
-        gpuinfo = None
-        try:
-            gpuinfo = json.loads(comment)
-        except:
-            pass
-        if gpuinfo is not None and allocGRES.find('gpu') != -1:
-            gpustats['ngpu'] = gpuinfo['ngpu']
-            gpustats['gputime'] = 60.0 * gpuinfo['step'] * gpuinfo['ngpu'] * gpuinfo['gpu_util'] / 100.0
-            gpustats['idealgpu'] = gpuinfo['ngpu'] * tlimit_req
-
-            # insert query
-            statement = 'INSERT IGNORE INTO gpuinfo ' + \
-                '(username,account,date,jobid,ngpu,gputime,idealgpu) ' + \
-                'VALUES (%s, %s, %s, %s, %s, %s, %s)'
-            args = (gpustats['username'], gpustats['account'], gpustats['date'],
-                    gpustats['jobid'], gpustats['ngpu'], gpustats['gputime'],
-                    gpustats['idealgpu'])
-            cursor.execute(statement, args)
-
     return user_stats
 
 
@@ -380,14 +353,17 @@ if __name__ == '__main__':
         user_total = len(getSlurmAccountUsers(account))
         user_num = 1
         for user in getSlurmAccountUsers(account):
+            print("account " + str(account_num) + "/" + str(account_total) + " (" + account + ") , user " + str(user_num) + "/" + str(user_total) + " (" + user + ")")
             stats = getJobStats(cursor,
                                 user,
                                 account,
                                 from_date,
                                 TRACK_SINGLE_CORE_JOBS)
 
+            print("job-count = " + str(stats['job-count']))
             if stats['job-count'] != 0:
                 updateDatabase(user, account, stats, from_date, cursor)
+            print()
             user_num += 1
         account_num += 1
 
